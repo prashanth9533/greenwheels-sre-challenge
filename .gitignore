@@ -25,6 +25,12 @@ env/
 crash.log
 override.tf
 override.tf.json
+# Terraform crash dumps
+crash.*.log
+
+# Terraform override files
+*_override.tf
+*_override.tf.json
 
 # Test coverage
 .coverage
@@ -33,3 +39,4 @@ htmlcov/
 # Operating system
 .DS_Store
 Thumbs.db
+.secrets/

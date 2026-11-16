@@ -17,6 +17,7 @@ jobs:
   ci:
     name: Lint, Test and Docker Health Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -37,6 +38,8 @@ jobs:
         run: python -m ruff check .
 
       - name: Run tests
+        env:
+          DATABASE_URL: sqlite:///./ci.db
         run: python -m pytest -q
 
       - name: Build Docker image
@@ -57,7 +60,9 @@ jobs:
               echo "API health check passed."
               exit 0
             fi
-            sleep 1
+            if [ "$i" -lt 10 ]; then
+              sleep 1
+            fi
           done
 
           echo "API did not become healthy within 10 seconds."
@@ -73,6 +78,7 @@ jobs:
     needs: ci
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -93,4 +99,6 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}

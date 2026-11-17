@@ -1,338 +1,540 @@
-# Greenwheels Fleet Lease Service --- SRE Engineering Challenge
 
-> **Status: In progress.** This repository is being built in phases.
-> Items described as planned are not implemented until verified.
+
+# Greenwheels Fleet Lease Service — SRE Engineering Challenge
+> **Status: Done.** The core challenge implementation and documentation are complete, including the FastAPI service, PostgreSQL persistence, Kafka event-processing components, observability configuration, Terraform resources, CI/CD workflow, tests, and operational documentation. Final Docker Compose integration and end-to-end verification remain outstanding; see [Assumptions and known limitations](#14-assumptions-and-known-limitations).
+
+
 
 ## 1. Project overview
+Greenwheels is a simulated electric-mobility company operating across Kenya, Ghana, and Uganda. Its fleet operations platform manages driver lease agreements, payment cycles, and vehicle assignments.
 
-Greenwheels is an electric-mobility company operating across Kenya,
-Ghana, and Uganda. Its fleet operations platform manages driver lease
-agreements, payment cycles, and vehicle assignments.
 
-This project builds a production-minded Site Reliability Engineering
-(SRE) foundation for a simulated Fleet Lease Service. The objective is
-to make the service observable, measurable, operable during incidents,
-and safer to deploy---not just to create an API.
+
+This project establishes a production-minded Site Reliability Engineering (SRE) foundation for a simulated Fleet Lease Service. The focus is on service reliability, observability, incident response, safe delivery, and scalability—not only API development.
+
+
 
 ## 2. Objectives
+- Provide an API for lease retrieval and lease-event ingestion.
 
--   Build a Python API for lease retrieval and lease event ingestion.
--   Persist lease facts and process events asynchronously.
--   Emit structured JSON logs with request ID, driver ID, event type,
-    and latency.
--   Define meaningful SLIs, SLOs, and error budgets.
--   Provide dashboards and actionable alerts with runbook links.
--   Document incident response and an on-call model.
--   Automate linting, tests, image publishing, and a health-check
-    reliability gate.
--   Explain how the service could scale to the challenge workload.
+- Persist lease facts and process events asynchronously.
 
-## 3. Planned architecture
+- Emit structured JSON logs containing request IDs, driver IDs, event types, and latency.
 
-``` text
-Clients
-   |
-   v
-FastAPI Fleet Lease API ------> /health
-   |                           /metrics
-   v
-Lease domain logic
-   |
-   +------> PostgreSQL (lease facts / persistence)
-   |
-   +------> Kafka (event streaming)
-                  |
-                  v
-             Event worker
+- Define service-level indicators (SLIs), service-level objectives (SLOs), and error-budget concepts.
 
-Prometheus ------> Grafana dashboards
-     |
-     +-----------> Alert rules / on-call
+- Provide Prometheus metrics, Grafana dashboard provisioning, and actionable alert rules.
 
-GitHub Actions --> lint / tests / image build
-Terraform -------> AWS observability resources
+- Document incident response and an on-call operating model.
+
+- Automate linting, tests, Docker image publishing, and a health-check reliability gate.
+
+- Describe how the service could scale to the challenge workload.
+
+
+
+## 3. Architecture
+```text
+
+                         Clients
+
+                            |
+
+                            v
+
+                  FastAPI Fleet Lease API
+
+                     /health /metrics
+
+                            |
+
+                            v
+
+                     Lease domain logic
+
+                       /          \\
+
+                      v            v
+
+                 PostgreSQL      Outbox table
+
+                                    |
+
+                                    v
+
+                             Outbox publisher
+
+                                    |
+
+                                    v
+
+                                  Kafka
+
+                                    |
+
+                                    v
+
+                              Kafka consumer
+
+                                    |
+
+                                    v
+
+                         Idempotent event record
+
+
+
+       Prometheus ------> FastAPI and consumer metrics
+
+            |
+
+            v
+
+       Grafana dashboards
+
+
+
+       Prometheus alert rules ------> Alertmanager ------> Email
+
+
+
+       GitHub Actions ------> lint / tests / Docker build / GHCR publish
+
+       Terraform -----------> AWS CloudWatch observability resources
+
 ```
 
-The final implementation will separate routing, domain logic,
-persistence, and background processing. The event persistence design
-should avoid unsafe PostgreSQL/Kafka dual writes; a transactional outbox
-and idempotent consumer are the intended reliability pattern.
+
+
+The service separates routing, domain logic, persistence, and background processing. The transactional outbox pattern is used to avoid directly coupling a database transaction to Kafka publishing. The consumer uses idempotency records to avoid applying duplicate events.
+
+
 
 ## 4. API endpoints
+| Method | Endpoint | Purpose |
 
-  -----------------------------------------------------------------------
-  Method                  Endpoint                Purpose
-  ----------------------- ----------------------- -----------------------
-  GET                     `/health`               Liveness/readiness
-                                                  health check
+|---|---|---|
 
-  GET                     `/leases/{driver_id}`   Retrieve lease status
-                                                  and payment cycle
+| GET | `/health` | Service health check |
 
-  POST                    `/leases/events`        Accept a lease fact
-                                                  (payment made, missed,
-                                                  or paused)
+| GET | `/leases/{driver_id}` | Retrieve lease status and payment-cycle information |
 
-  GET                     `/metrics`              Prometheus-compatible
-                                                  metrics
-  -----------------------------------------------------------------------
+| POST | `/leases/events` | Accept a lease event, such as payment made, missed, or paused |
 
-## 5. Observability and SLO plan
+| GET | `/metrics` | Expose Prometheus-compatible metrics |
 
-The service will expose at least three useful SLIs:
 
-1.  Request success rate / error rate.
-2.  API request latency, including p95 latency.
-3.  Lease event processing time.
 
-Each SLO will document its target, measurement window, measurement
-method, and error budget. Targets are engineering assumptions for this
-exercise, not existing Greenwheels production commitments.
+## 5. Observability and SLOs
+The implementation includes three service-level measurement areas:
 
-Planned telemetry includes structured JSON logs and Prometheus metrics
-for request volume, errors, duration, event processing, and Kafka
-consumer lag.
 
-Prometheus alert rules and Grafana dashboards will be stored as code. At
-least three actionable alerts will cover: - High error rate on
-`POST /leases/events`. - API latency SLO breach. - Service health check
-failure.
 
-Each alert will specify a condition, severity, runbook reference, and
-notification channel.
+1. ****Request success/error rate**** — tracks API request outcomes.
+
+2. ****API latency**** — measures request duration and supports p95 latency analysis.
+
+3. ****Lease event processing time**** — measures event-processing performance.
+
+
+
+SLO targets, measurement windows, and error budgets are engineering assumptions for this exercise; they are not existing Greenwheels production commitments.
+
+
+
+Structured JSON logs include request context such as request ID, driver ID, event type, and latency. Prometheus configuration scrapes the API and Kafka-consumer metrics. Grafana dashboard provisioning and Prometheus alert rules are stored in the repository.
+
+
+
+The alert configuration covers:
+
+- High lease-event API error rate.
+
+- API latency SLO breach.
+
+- FastAPI service health failure.
+
+
+
+Alerts include severity and operational context, including runbook references. Alertmanager is configured for email notifications.
+
+
 
 ## 6. Incident response and on-call
+Operational guidance is documented in:
 
-`RUNBOOK.md` will cover: - **Lease event processing backlog:** Kafka
-consumer lag rises and payment events are not processed. - **Database
-connection pool exhaustion:** RDS connections are exhausted and lease
-endpoints return HTTP 500 errors.
 
-`ONCALL.md` will describe a four-engineer rotation covering Nairobi
-(UTC+3) and Pune (UTC+5:30), including handoffs, escalation,
-error-budget-based deployment decisions, and a 90-day alert-fatigue
-reduction plan.
+
+- ****`RUNBOOK.md`**** — troubleshooting Kafka consumer lag/event backlog and database connection-pool exhaustion affecting lease API requests.
+
+- ****`ONCALL.md`**** — a four-engineer rotation across Nairobi (UTC+3) and Pune (UTC+5:30), including handoffs, escalation, error-budget deployment decisions, and a 90-day alert-fatigue reduction plan.
+
+
 
 ## 7. Scale design
+`ARCHITECTURE.md` addresses the challenge scenario:
 
-`ARCHITECTURE.md` will address the challenge scenario: - 500,000
-registered drivers across 8 countries. - 50,000 active leases with daily
-payment events. - Peak ingestion of 500 lease events per second. -
-Degraded RDS read latency during peak processing. - Kafka consumer lag
-during deployment rollout.
 
-The design will cover Kafka partitioning and consumer groups, database
-read replicas, caching and invalidation, lag detection and recovery,
-safe ECS rolling deployments, and AWS cost optimization.
+
+- 500,000 registered drivers across 8 countries.
+
+- 50,000 active leases.
+
+- Peak ingestion of 500 lease events per second.
+
+- Degraded RDS read latency during peak processing.
+
+- Kafka consumer lag during deployment rollout.
+
+
+
+The design discusses Kafka partitioning and consumer groups, database read replicas, caching and invalidation, lag detection and recovery, safe ECS rolling deployments, and AWS cost optimization. These are architecture recommendations for the scale exercise, not a claim that a production-scale AWS environment has been deployed.
+
+
 
 ## 8. Technology stack
+| Area | Technology |
 
-  Area                Technology
-  ------------------- --------------------------
-  API                 Python, FastAPI, Uvicorn
-  Database            PostgreSQL
-  Event streaming     Apache Kafka
-  Metrics             Prometheus
-  Dashboards          Grafana
-  Containers          Docker, Docker Compose
-  Cloud / IaC         AWS, Terraform
-  CI/CD               GitHub Actions
-  Testing / quality   pytest, HTTPX, Ruff
+|---|---|
+
+| API | Python, FastAPI, Uvicorn |
+
+| Database | PostgreSQL, SQLAlchemy |
+
+| Event streaming | Apache Kafka |
+
+| Metrics | Prometheus |
+
+| Dashboards | Grafana |
+
+| Alerting | Prometheus alert rules, Alertmanager, email |
+
+| Containers | Docker, Docker Compose |
+
+| Cloud / IaC | AWS, Terraform |
+
+| CI/CD | GitHub Actions, GitHub Container Registry |
+
+| Testing / quality | pytest, HTTPX, Ruff |
+
+
 
 ## 9. Repository structure
+```text
 
-``` text
 .
+
 ├── app/
-│   ├── api/             # HTTP routes
-│   ├── domain/          # Lease business logic
-│   ├── persistence/     # Database access
-│   └── worker/          # Background event consumer
-├── infra/               # Terraform definitions
+
+│   ├── api/                 # HTTP routes
+
+│   ├── domain/              # Lease business logic
+
+│   ├── observability/       # SLI and observability logic
+
+│   ├── persistence/         # Database access and models
+
+│   └── worker/              # Outbox publisher and Kafka consumer
+
+├── infra/                   # Terraform definitions
+
 ├── monitoring/
-│   ├── prometheus/      # Scrape and alert rules
-│   └── grafana/         # Dashboard provisioning
-├── tests/               # Unit and integration tests
-├── .github/workflows/   # CI/CD workflow
+
+│   ├── alertmanager/        # Alertmanager configuration
+
+│   ├── grafana/             # Dashboard and provisioning configuration
+
+│   └── prometheus/          # Scrape configuration and alert rules
+
+├── tests/                   # Unit and API tests
+
+├── .github/workflows/       # CI/CD workflow
+
 ├── ARCHITECTURE.md
+
 ├── AI_USAGE.md
+
 ├── ONCALL.md
+
 ├── RUNBOOK.md
+
 ├── Dockerfile
+
 ├── docker-compose.yml
-├── requirements.txt
-└── README.md
+
+└── requirements.txt
+
 ```
+
+
 
 ## 10. Local setup
-
 ### Prerequisites
+- Git
 
--   Git
--   Python 3.12 or another supported compatible version
--   Docker Desktop with Docker Compose
--   Terraform for infrastructure validation
+- Python 3.13 (the Docker image uses Python 3.13)
+
+- Docker Desktop with Docker Compose
+
+- Terraform, if validating the infrastructure configuration
+
+
 
 ### Clone the repository
+```bash
 
-``` bash
-git clone <your-repository-url>
+git clone https://github.com/prashanth9533/greenwheels-sre-challenge.git
+
 cd greenwheels-sre-challenge
+
 ```
+
+
 
 ### Create and activate a virtual environment
-
 Windows PowerShell:
 
-``` powershell
+
+
+```powershell
+
 python -m venv .venv
+
 .\.venv\Scripts\Activate.ps1
+
 ```
+
+
 
 Linux / macOS:
 
-``` bash
+
+
+```bash
+
 python3 -m venv .venv
+
 source .venv/bin/activate
+
 ```
+
+
 
 ### Install dependencies
+```bash
 
-``` bash
 python -m pip install --upgrade pip
+
 pip install -r requirements.txt
+
 ```
 
-### Start the stack
 
-Once the application and Compose configuration are complete:
 
-``` bash
-docker compose up --build
+### Run tests and lint locally
+```bash
+
+python -m pytest -q
+
+python -m ruff check .
+
 ```
 
-Run in the background:
 
-``` bash
-docker compose up --build -d
+
+Latest local verification recorded during development: ****15 tests passed**** and ****Ruff checks passed****. A Starlette/httpx deprecation warning was reported by the test environment; it did not fail the test run.
+
+
+
+### Docker Compose
+The Compose file currently starts the supporting infrastructure services: PostgreSQL, Kafka, Prometheus, Grafana, and Alertmanager. The API and worker services are being integrated into the Compose stack and must pass end-to-end verification before the complete-stack command is treated as the final one-command demo.
+
+
+
+To start the currently configured Compose services:
+
+
+
+```bash
+
+docker compose up -d
+
 ```
 
-Stop the stack:
 
-``` bash
-docker compose down
-```
 
-View logs:
+To inspect service status and logs:
 
-``` bash
+
+
+```bash
+
+docker compose ps
+
 docker compose logs -f
+
 ```
 
-### Verify the service
 
-After startup, use the API port configured in `docker-compose.yml`:
 
-``` bash
-curl http://localhost:<api-port>/health
-curl http://localhost:<api-port>/metrics
+To stop the Compose-managed services:
+
+
+
+```bash
+
+docker compose down
+
 ```
 
-Replace `<api-port>` with the verified configured port before final
-submission. Add sample successful responses after implementation.
 
-## 11. Tests and lint
 
-``` bash
-pytest -v
-ruff check .
+****Data note:**** `docker compose down` does not remove named volumes. Do not use `docker compose down -v` unless you intentionally want to delete the local PostgreSQL, Kafka, and Grafana data volumes.
+
+
+
+### API verification
+A separately started development API container was verified on host port `8002` during development:
+
+
+
+```bash
+
+curl http://localhost:8002/health
+
+curl http://localhost:8002/metrics
+
 ```
 
-Tests will cover lease event ingestion, SLI calculation, and an
-integration check that validates the expected SLI metric labels on
-`/metrics`.
+
+
+Use the port configured for the API instance you have actually started. The planned Compose-managed API port is `8003`, subject to final Compose integration and verification.
+
+
+
+## 11. Tests and code quality
+Run:
+
+
+
+```bash
+
+python -m pytest -v
+
+python -m ruff check .
+
+```
+
+
+
+The test suite covers lease-service/API behavior and SLI calculations. The API metrics endpoint is included in the tests. The local test run completed with 15 passing tests.
+
+
 
 ## 12. CI/CD and infrastructure
+### GitHub Actions
+The GitHub Actions workflow runs on pull requests and pushes to `main`. It performs linting and automated tests, builds the Docker image, runs a container health check, and publishes the image to GitHub Container Registry on pushes to `main`.
 
-The planned GitHub Actions workflow will run lint and unit tests on pull
-requests, build and push the Docker image when changes are merged to
-`main`, then verify that `/health` returns HTTP 200 within 10 seconds
-after container startup. Failure to pass this health check must fail the
-workflow.
 
-Terraform will define at least a CloudWatch log group, metric filters,
-and two CloudWatch alarms. Prometheus/Grafana configuration will provide
-the local observability path.
 
-## 13. What an evaluator should observe
+- ****Repository:**** https://github.com/prashanth9533/greenwheels-sre-challenge
 
-After implementation, an evaluator should be able to: - Start the stack
-with one Docker Compose command. - Call the health, lease retrieval, and
-event ingestion endpoints. - Inspect structured JSON logs. - Scrape
-`/metrics` and review the defined SLIs. - Inspect Grafana dashboards and
-alert definitions. - Follow the two incident runbooks. - Review the
-on-call model and scale design. - Validate Terraform and run the tests
-and lint checks.
+- ****Actions:**** https://github.com/prashanth9533/greenwheels-sre-challenge/actions
+
+- ****Container image:**** `ghcr.io/prashanth9533/greenwheels-sre-challenge:latest`
+
+
+
+The workflow has completed successfully during project validation.
+
+
+
+### Terraform / AWS
+The Terraform configuration provisions:
+
+- A CloudWatch log group with retention configuration.
+
+- CloudWatch metric filters for application errors and request latency.
+
+- Two CloudWatch alarms.
+
+
+
+The Terraform apply completed successfully during development. AWS resources may incur charges while they remain deployed. Review the resources and cost implications before leaving them running.
+
+
+
+## 13. What an evaluator can review
+An evaluator can review:
+
+
+
+- The FastAPI health, lease retrieval, and event-ingestion endpoints.
+
+- Structured application logging and Prometheus metrics.
+
+- SLI calculation logic and automated tests.
+
+- Prometheus scrape and alert configuration.
+
+- Grafana dashboard provisioning and Alertmanager configuration.
+
+- The Kafka outbox publisher and idempotent consumer implementation.
+
+- The incident runbooks and on-call operating model.
+
+- The scale-design document.
+
+- Terraform definitions and GitHub Actions workflow.
+
+- The published Docker image in GHCR.
+
+
+
+The complete Docker Compose application-and-worker integration and end-to-end event flow remain subject to final verification.
+
+
 
 ## 14. Assumptions and known limitations
+- This is a simulated challenge, not a connection to Greenwheels production systems.
 
--   This is a simulated challenge, not a connection to Greenwheels
-    production systems.
--   SLO targets, alert thresholds, retention periods, and resource sizes
-    are engineering assumptions to be tuned with real traffic data.
--   AWS deployment requires an AWS account, credentials, and
-    environment-specific configuration. Never commit credentials or
-    secrets.
--   Slack notifications require a configured integration or webhook;
-    secrets must not be stored in source control.
--   Local Docker Compose is for development and demonstration, not a
-    production deployment topology.
--   Planned features must not be represented as completed until their
-    implementation and validation are demonstrated.
+- SLO targets, alert thresholds, retention periods, and resource sizes are engineering assumptions to be tuned using real traffic data.
 
-## 15. Interview explanation (60--90 seconds)
+- AWS deployment requires an AWS account and environment-specific configuration. Never commit credentials or secrets.
 
-"I worked on an SRE engineering challenge for a simulated
-electric-mobility fleet lease platform. The service manages driver lease
-information and payment-related events. My objective was to establish a
-reliability foundation around the service, not just develop an API.
+- The Terraform resources provision observability components; they do not constitute a complete production application deployment.
 
-I designed the service around Python and FastAPI, PostgreSQL for
-persistence, and Kafka for asynchronous event processing. I separated
-the API layer, business logic, persistence, and worker responsibilities
-so that each part can be maintained and scaled independently.
+- The scale exercise describes a proposed architecture; it does not deploy a production environment for 500,000 drivers.
 
-From an SRE perspective, I focused on business-relevant SLIs such as
-request success rate, API latency, and lease event processing time. I
-defined the approach for SLOs and error budgets, and planned Prometheus
-metrics, Grafana dashboards, and actionable alerts linked to runbooks.
+- Local Docker Compose is for development and demonstration, not a production deployment topology.
 
-I also documented incident response for Kafka consumer backlog and
-database connection pool exhaustion, and designed an on-call model for
-engineers in Nairobi and Pune. For delivery, I included Terraform for
-AWS observability resources and GitHub Actions for linting, testing,
-image publishing, and a health-check reliability gate.
+- The Kafka consumer has idempotency handling. A production deployment should additionally implement and validate a complete dead-letter queue, retry policy, schema evolution strategy, and operational recovery process.
 
-Finally, I considered how the service could scale to 500,000 drivers and
-500 events per second, including Kafka partitioning, read replicas,
-caching, safe deployments, and cost optimization."
+- Final Docker Compose integration and full end-to-end validation of API-to-outbox-to-Kafka-to-consumer processing are still pending.
 
-**Important:** The repository is still being implemented phase by phase.
-Until a feature is coded and tested, describe it in interviews as a
-design or implementation plan---not as a completed production feature.
-Update this explanation as each phase is validated.
+- Do not represent a feature as production-ready solely because its configuration or design document exists; verify its runtime behavior.
 
-## 16. Evaluation priorities
 
-  Area                                   Weight
-  ------------------------------------ --------
-  Observability and SLO design              30%
-  Incident runbook quality                  20%
-  Infrastructure as Code                    15%
-  Service implementation and testing        15%
-  Scale exercise                            10%
-  CI/CD and reliability gate                 5%
-  Communication and documentation            5%
 
-The challenge emphasizes clarity, correctness, operational thinking, and
-polish.
+## 15. Evaluation priorities
+| Area | Weight |
+
+|---|---:|
+
+| Observability and SLO design | 30% |
+
+| Incident runbook quality | 20% |
+
+| Infrastructure as Code | 15% |
+
+| Service implementation and testing | 15% |
+
+| Scale exercise | 10% |
+
+| CI/CD and reliability gate | 5% |
+
+| Communication and documentation | 5% |
+
+
+
+The challenge emphasizes clarity, correctness, operational thinking, and polish.
